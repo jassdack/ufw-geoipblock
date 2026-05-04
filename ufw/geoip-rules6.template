@@ -1,0 +1,18 @@
+
+# === BEGIN GEOIPBLOCK ===
+# [Phase 1] Multi-Layer Defense: ipset Blacklist
+-A ufw6-before-input -m set --match-set persistent_offenders6 src -j DROP
+
+# [Phase 2] Connection State Management
+-A ufw6-before-input -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+# [Phase 3] Local Network Trust (IPv6)
+-A ufw6-before-input -i lo -j ACCEPT
+-A ufw6-before-input -s fe80::/10 -j ACCEPT
+-A ufw6-before-input -s fc00::/7 -j ACCEPT
+{{TRUSTED_SUBNETS_RULES}}
+
+# [Phase 4] GeoIP Blocking Rules (IPv6)
+{{RULES}}
+
+# === END GEOIPBLOCK ===

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run GeoIP update daily
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,5 @@
+22,SSH Access,block
+80,HTTP Web,block
+443,HTTPS Secure,block
+3000:3010,Dev Web Servers,pass
+8081,File Browser UI,block
