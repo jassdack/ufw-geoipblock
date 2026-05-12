@@ -1,4 +1,4 @@
-# geoipblock
+# UFW-GeoIP block
 
 A script to automate GeoIP filtering for Linux servers using `xtables-addons` and `UFW`. It manages country-based blocking/allowing by injecting rules into UFW's `before.rules`.
 
