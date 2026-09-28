@@ -11,7 +11,8 @@ DRY_RUN=0
 SOURCE_COUNTRY="JP"
 PORT_CONFIG="ports.csv"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-DEFAULT_TIMEOUT=2147483  # Maximum timeout supported by Linux kernel ipset module (~24.85 days)
+MAX_TIMEOUT=2147483  # Maximum timeout accepted by ipset (~24.85 days)
+DEFAULT_TIMEOUT=${DEFAULT_TIMEOUT:-$MAX_TIMEOUT}  # Blacklist duration in seconds (overridable via env)
 
 # Argument Parsing
 POSITIONAL_ARGS=()
@@ -34,6 +35,12 @@ done
 
 [ ${#POSITIONAL_ARGS[@]} -gt 0 ] && SOURCE_COUNTRY="${POSITIONAL_ARGS[0]}"
 [ ${#POSITIONAL_ARGS[@]} -gt 1 ] && PORT_CONFIG="${POSITIONAL_ARGS[1]}"
+
+if ! [[ "$DEFAULT_TIMEOUT" =~ ^[0-9]{1,7}$ ]] || (( 10#$DEFAULT_TIMEOUT < 1 || 10#$DEFAULT_TIMEOUT > MAX_TIMEOUT )); then
+    echo "ERROR: DEFAULT_TIMEOUT must be an integer between 1 and $MAX_TIMEOUT (got: '$DEFAULT_TIMEOUT')."
+    exit 1
+fi
+DEFAULT_TIMEOUT=$((10#$DEFAULT_TIMEOUT))
 
 # 1. Root check and Lock
 if [[ $EUID -ne 0 ]]; then
@@ -175,9 +182,35 @@ echo "--- [3/5] Initializing ipset blacklists and persistence ---"
 # Check for IPv6 support
 KERNEL_IPV6_SUPPORT=$( [ -f /proc/net/if_inet6 ] && echo "yes" || echo "" )
 
+# Create an ipset, or migrate an existing one whose timeout differs from DEFAULT_TIMEOUT.
+# `ipset create -exist` fails when the existing set has different parameters, and the set
+# cannot be destroyed while UFW rules reference it, so entries are copied into a
+# temporary set which is then swapped in.
+ensure_ipset() {
+    local name=$1
+    shift  # Remaining args: extra create options (e.g. family inet6)
+
+    if ! ipset list -t "$name" >/dev/null 2>&1; then
+        ipset create "$name" hash:ip "$@" timeout "$DEFAULT_TIMEOUT"
+        return 0
+    fi
+
+    local current
+    current=$(ipset list -t "$name" | sed -n 's/^Header:.* timeout \([0-9]\+\).*/\1/p')
+    [ "$current" = "$DEFAULT_TIMEOUT" ] && return 0
+
+    echo "Updating timeout of ipset '$name': ${current:-none} -> $DEFAULT_TIMEOUT (existing entries are kept)"
+    local tmp="${name}_tmp"
+    ipset destroy "$tmp" 2>/dev/null || true
+    ipset create "$tmp" hash:ip "$@" timeout "$DEFAULT_TIMEOUT"
+    ipset save "$name" | sed -n "s/^add $name /add $tmp /p" | ipset restore -exist
+    ipset swap "$name" "$tmp"
+    ipset destroy "$tmp"
+}
+
 # Create ipsets immediately
-ipset create persistent_offenders hash:ip timeout "$DEFAULT_TIMEOUT" -exist
-[ ! -z "$KERNEL_IPV6_SUPPORT" ] && ipset create persistent_offenders6 hash:ip family inet6 timeout "$DEFAULT_TIMEOUT" -exist
+ensure_ipset persistent_offenders
+[ ! -z "$KERNEL_IPV6_SUPPORT" ] && ensure_ipset persistent_offenders6 family inet6
 
 # Ensure ipsets are recreated on boot before UFW loads
 # We use /etc/ufw/before.init which is executed by UFW before rules are applied

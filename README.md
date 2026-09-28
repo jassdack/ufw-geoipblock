@@ -118,7 +118,13 @@ sudo ipset list persistent_offenders
 ```
 
 > [!NOTE]
-> The default blacklist duration is defined as `DEFAULT_TIMEOUT=2147483` (seconds) near the top of `install.sh`. This value (~24.85 days) corresponds to the maximum timeout limit supported by the Linux kernel `ipset` module. You can customize this constant in `install.sh` prior to running the installation if you prefer a shorter duration (e.g., `1209600` for 14 days).
+> The default blacklist duration is `2147483` seconds (~24.85 days), the maximum timeout accepted by `ipset`. To use a shorter duration, set the `DEFAULT_TIMEOUT` environment variable (in seconds, 1–2147483) when running the installer, e.g. 14 days:
+>
+> ```bash
+> sudo DEFAULT_TIMEOUT=1209600 ./install.sh JP ports.csv
+> ```
+>
+> Re-running the installer with a different value updates the existing ipsets in place; entries already on the blacklist are kept.
 
 ## 🤝 Integration with Fail2Ban
 
