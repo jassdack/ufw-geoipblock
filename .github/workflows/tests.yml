@@ -1,0 +1,28 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  tests:
+    name: Run tests (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ 'ubuntu:24.04', 'ubuntu:22.04', 'debian:12' ]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Containers share the host kernel and cannot load modules themselves.
+      - name: Load ipset kernel modules
+        run: sudo modprobe -a ip_set ip_set_hash_ip xt_set
+
+      - name: Run tests
+        env:
+          TEST_IMAGE: ${{ matrix.image }}
+        run: tests/run.sh

@@ -1,0 +1,2 @@
+# Let `# shellcheck source=...` directives in tests/ be followed.
+external-sources=true
