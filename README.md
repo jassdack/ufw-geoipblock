@@ -104,7 +104,7 @@ journalctl -u update-geoip.service
 
 ## 🖤 Manual Blacklisting (ipset)
 
-Phase 1 of the defense system uses a high-performance `ipset` named `persistent_offenders`. You can use this to manually block specific IPs (even those from your allowed country) for 30 days:
+Phase 1 of the defense system uses a high-performance `ipset` named `persistent_offenders`. You can use this to manually block specific IPs (even those from your allowed country) for approximately 25 days (2,147,483 seconds):
 
 ```bash
 # Block an IP
@@ -116,6 +116,9 @@ sudo ipset del persistent_offenders 1.2.3.4
 # List all blacklisted IPs
 sudo ipset list persistent_offenders
 ```
+
+> [!NOTE]
+> The default blacklist duration is defined as `DEFAULT_TIMEOUT=2147483` (seconds) near the top of `install.sh`. This value (~24.85 days) corresponds to the maximum timeout limit supported by the Linux kernel `ipset` module. You can customize this constant in `install.sh` prior to running the installation if you prefer a shorter duration (e.g., `1209600` for 14 days).
 
 ## 🤝 Integration with Fail2Ban
 

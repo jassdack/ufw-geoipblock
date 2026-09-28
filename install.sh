@@ -11,6 +11,7 @@ DRY_RUN=0
 SOURCE_COUNTRY="JP"
 PORT_CONFIG="ports.csv"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+DEFAULT_TIMEOUT=2147483  # Maximum timeout supported by Linux kernel ipset module (~24.85 days)
 
 # Argument Parsing
 POSITIONAL_ARGS=()
@@ -175,8 +176,8 @@ echo "--- [3/5] Initializing ipset blacklists and persistence ---"
 KERNEL_IPV6_SUPPORT=$( [ -f /proc/net/if_inet6 ] && echo "yes" || echo "" )
 
 # Create ipsets immediately
-ipset create persistent_offenders hash:ip timeout 2592000 -exist
-[ ! -z "$KERNEL_IPV6_SUPPORT" ] && ipset create persistent_offenders6 hash:ip family inet6 timeout 2592000 -exist
+ipset create persistent_offenders hash:ip timeout "$DEFAULT_TIMEOUT" -exist
+[ ! -z "$KERNEL_IPV6_SUPPORT" ] && ipset create persistent_offenders6 hash:ip family inet6 timeout "$DEFAULT_TIMEOUT" -exist
 
 # Ensure ipsets are recreated on boot before UFW loads
 # We use /etc/ufw/before.init which is executed by UFW before rules are applied
@@ -188,11 +189,11 @@ fi
 
 # Idempotent injection into before.init
 sed -i '/# === BEGIN GEOIPBLOCK-INIT ===/,/# === END GEOIPBLOCK-INIT ===/d' "$INIT_FILE"
-cat << 'EOF' >> "$INIT_FILE"
+cat << EOF >> "$INIT_FILE"
 # === BEGIN GEOIPBLOCK-INIT ===
-ipset create persistent_offenders hash:ip timeout 2592000 -exist
+ipset create persistent_offenders hash:ip timeout ${DEFAULT_TIMEOUT} -exist
 if [ -f /proc/net/if_inet6 ]; then
-    ipset create persistent_offenders6 hash:ip family inet6 timeout 2592000 -exist
+    ipset create persistent_offenders6 hash:ip family inet6 timeout ${DEFAULT_TIMEOUT} -exist
 fi
 # === END GEOIPBLOCK-INIT ===
 EOF

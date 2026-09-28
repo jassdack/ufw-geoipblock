@@ -105,7 +105,7 @@ journalctl -u update-geoip.service
 
 ## 🖤 手動ブラックリスト (ipset)
 
-防御システムの Phase 1 では、`persistent_offenders` という名前の高速な `ipset` を使用しています。許可された国からのアクセスであっても、特定のIPを個別に30日間ブロックしたい場合に使用できます：
+防御システムの Phase 1 では、`persistent_offenders` という名前の高速な `ipset` を使用しています。許可された国からのアクセスであっても、特定のIPを個別に約25日間（2,147,483秒）ブロックしたい場合に使用できます：
 
 ```bash
 # 特定のIPをブロック
@@ -117,6 +117,9 @@ sudo ipset del persistent_offenders 1.2.3.4
 # ブラックリストの一覧表示
 sudo ipset list persistent_offenders
 ```
+
+> [!NOTE]
+> ブラックリストのデフォルト有効期間は、`install.sh` の先頭付近にある定数 `DEFAULT_TIMEOUT=2147483`（秒）で定義されています。この値（約24.85日）は Linux カーネルの `ipset` モジュールで設定可能な最大値です。より短い期間（例: 14日間の `1209600` など）に設定したい場合は、インストール実行前に `install.sh` 内のこの定数を変更してください。
 
 ## 🤝 Fail2Ban との連携
 
