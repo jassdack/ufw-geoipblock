@@ -14,7 +14,7 @@ LOG_TAG="geoip-updater"
 error_handler() {
     local exit_code=$?
     local line_number=$1
-    logger -t "$LOG_TAG" -p user.err "ERROR: Database update failed at line $line_number with exit code $exit_code. Existing database preserved."
+    logger -s -t "$LOG_TAG" -p user.err "ERROR: Database update failed at line $line_number with exit code $exit_code. Existing database preserved."
     # 後片付け
     [ -d "$TMP_BUILD_DIR" ] && rm -rf "$TMP_BUILD_DIR"
     exit "$exit_code"
@@ -26,7 +26,7 @@ trap 'error_handler $LINENO' ERR
 LOCK_FILE="/var/run/geoipblock_update.lock"
 exec 9> "$LOCK_FILE"
 if ! flock -n 9; then
-    logger -t "$LOG_TAG" -p user.err "ERROR: Another update process is already running. Exiting."
+    logger -s -t "$LOG_TAG" -p user.err "ERROR: Another update process is already running. Exiting."
     exit 1
 fi
 
@@ -41,11 +41,13 @@ cd "$TEMP_DL_DIR"
 # 3. データのダウンロードと一時ディレクトリへのビルド
 logger -t "$LOG_TAG" "Starting GeoIP database download and build..."
 
-XT_GEOIP_DL=$(command -v xt_geoip_dl || find /usr/libexec/xtables-addons /usr/lib/xtables-addons -name xt_geoip_dl 2>/dev/null | head -n 1)
-XT_GEOIP_BUILD=$(command -v xt_geoip_build || find /usr/libexec/xtables-addons /usr/lib/xtables-addons -name xt_geoip_build 2>/dev/null | head -n 1)
+# `|| true`: find exits non-zero when one of the directories is missing (e.g. Ubuntu 24.04
+# has only /usr/libexec/xtables-addons), which would otherwise trip pipefail and the ERR trap.
+XT_GEOIP_DL=$(command -v xt_geoip_dl || find /usr/libexec/xtables-addons /usr/lib/xtables-addons -name xt_geoip_dl 2>/dev/null | head -n 1 || true)
+XT_GEOIP_BUILD=$(command -v xt_geoip_build || find /usr/libexec/xtables-addons /usr/lib/xtables-addons -name xt_geoip_build 2>/dev/null | head -n 1 || true)
 
 if [ -z "$XT_GEOIP_DL" ] || [ -z "$XT_GEOIP_BUILD" ]; then
-    logger -t "$LOG_TAG" -p user.err "ERROR: xt_geoip_dl or xt_geoip_build not found. Is xtables-addons-common installed?"
+    logger -s -t "$LOG_TAG" -p user.err "ERROR: xt_geoip_dl or xt_geoip_build not found. Is xtables-addons-common installed?"
     exit 1
 fi
 
@@ -60,12 +62,12 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
         break
     fi
     RETRY_COUNT=$((RETRY_COUNT+1))
-    logger -t "$LOG_TAG" -p user.warn "xt_geoip_dl failed. Retrying ($RETRY_COUNT/$MAX_RETRIES) in 15 seconds..."
+    logger -s -t "$LOG_TAG" -p user.warn "xt_geoip_dl failed. Retrying ($RETRY_COUNT/$MAX_RETRIES) in 15 seconds..."
     sleep 15
 done
 
 if [ "$DOWNLOAD_SUCCESS" -ne 1 ]; then
-    logger -t "$LOG_TAG" -p user.err "ERROR: GeoIP database download failed after $MAX_RETRIES attempts. Aborting update. Your existing firewall rules and DB are completely untouched."
+    logger -s -t "$LOG_TAG" -p user.err "ERROR: GeoIP database download failed after $MAX_RETRIES attempts. Aborting update. Your existing firewall rules and DB are completely untouched."
     exit 1
 fi
 
@@ -89,7 +91,7 @@ if mv "$TMP_BUILD_DIR" "$DB_DIR"; then
     logger -t "$LOG_TAG" "GeoIP Database updated successfully and atomically swapped. Backup preserved at ${DB_DIR}.old."
 else
     # ロールバック
-    logger -t "$LOG_TAG" -p user.err "ERROR: Failed to swap new database. Rolling back to previous version."
+    logger -s -t "$LOG_TAG" -p user.err "ERROR: Failed to swap new database. Rolling back to previous version."
     [ -d "${DB_DIR}.old" ] && mv "${DB_DIR}.old" "$DB_DIR"
     rm -rf "$TMP_BUILD_DIR"
     rm -rf "$TEMP_DL_DIR"

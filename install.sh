@@ -94,7 +94,8 @@ process_port_entry() {
 if [ -f "$PORT_CONFIG" ]; then
     echo "--- Reading port configuration from $PORT_CONFIG ---"
     # Sanitize CRLF (\r) and read. Using awk to properly parse basic CSV without breaking on commas in memo.
-    while read -r prange pmemo pstatus || [ -n "$prange" ]; do
+    # Fields are joined with \x1f (a non-whitespace IFS) so memos containing spaces and empty memos are preserved.
+    while IFS=$'\x1f' read -r prange pmemo pstatus || [ -n "$prange" ]; do
         # Skip empty lines or comments
         [[ -z "${prange// /}" ]] && continue
         [[ "$prange" =~ ^[[:space:]]*# ]] && continue
@@ -106,18 +107,18 @@ if [ -f "$PORT_CONFIG" ]; then
             status = $NF
             memo = ""
             for (i=2; i<NF; i++) { memo = memo (i==2?"":",") $i }
-            print port "\t" memo "\t" status
+            print port "\037" memo "\037" status
         } else if (NF == 2) {
-            print $1 "\t" $2 "\t" "block"
+            print $1 "\037" $2 "\037" "block"
         } else {
-            print $1 "\t\t" "block"
+            print $1 "\037\037" "block"
         }
     }' "$PORT_CONFIG" | tr -d '\r')
 else
     echo "--- Using manual port list: $PORT_CONFIG ---"
     IFS=',' read -ra ADDR <<< "$PORT_CONFIG"
     for p in "${ADDR[@]}"; do
-        process_port_entry "$p" "" "enabled" "$SOURCE_COUNTRY"
+        process_port_entry "$p" "" "block" "$SOURCE_COUNTRY"
     done
 fi
 
@@ -221,6 +222,8 @@ if [ ! -f "$INIT_FILE" ]; then
 fi
 
 # Idempotent injection into before.init
+# UFW only runs before.init when it is executable; the stock file on Ubuntu is not.
+chmod +x "$INIT_FILE"
 sed -i '/# === BEGIN GEOIPBLOCK-INIT ===/,/# === END GEOIPBLOCK-INIT ===/d' "$INIT_FILE"
 cat << EOF >> "$INIT_FILE"
 # === BEGIN GEOIPBLOCK-INIT ===
@@ -338,7 +341,8 @@ chmod +x "$ROLLBACK_SCRIPT"
 rm -f /tmp/geoip_rollback.cancel
 
 # Run rollback in background
-nohup "$ROLLBACK_SCRIPT" >/dev/null 2>&1 &
+# Close the install lock fd (9) so it is not held for the rollback's lifetime
+nohup "$ROLLBACK_SCRIPT" >/dev/null 2>&1 9>&- &
 
 echo "==============================================================="
 echo " Installation Applied! UFW Reloaded."
