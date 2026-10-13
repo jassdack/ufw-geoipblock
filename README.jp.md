@@ -1,4 +1,4 @@
-# geoipblock
+# UFW-GeoIP block
 
 `xtables-addons` と `UFW` を使用して、LinuxサーバーのGeoIPフィルタリング（国別ブロック）を自動化するスクリプトです。UFWの `before.rules` にルールを注入することで、特定のポートに対して指定した国以外からのアクセスを制限します。
 
@@ -8,13 +8,13 @@
 
 1.  **Phase 1: ipset ブラックリスト**: `persistent_offenders` ipset に登録されたIPからの通信を高速にドロップします。
 2.  **Phase 2: ステート管理**: `conntrack` (`RELATED,ESTABLISHED`) を使用し、確立済みのセッションを維持します。
-3.  **Phase 3: ローカルネットワーク**: ホストが直接接続しているローカルサブネットからの通信を自動検知して許可します。
+3.  **Phase 3: ローカルネットワーク**: ループバックインターフェースと、ホストが直接接続しているローカルサブネット（自動検知。後述の `TRUSTED_SUBNETS` で上書き可）からの通信を許可します。
 4.  **Phase 4: GeoIP フィルタリング**: `xt_geoip` を使用して国判別を行います。許可されていない国からの TCP/UDP 通信は、レートリミット付きでログに記録され、ドロップされます。
 
 ## ✨ 特徴
 
 - **自動ロールバック (Dead Man's Switch)**: インストール後3分以内に `geoipblock-confirm` コマンドを実行しない場合、設定が自動的に元に戻ります。これにより、誤設定による SSH ロックアウトを防ぎます。
-- **自動更新**: systemd timer により、GeoIP データベースを毎日自動更新します。更新は一時ディレクトリで行われ、成功時のみ `mv` によってアトミックに入れ替えられます。
+- **自動更新**: systemd timer により、GeoIP データベースを毎日自動更新します。更新は一時ディレクトリで行われ、成功時のみ `mv` によってアトミックに入れ替えられます。なお `xt_geoip` はルールの読み込み時にしかデータベースを読まないため、新しいデータベースが効くのは次の `ufw reload` か再起動のときです（後述の「メンテナンスと監視」を参照）。
 - **ダウンロード・リトライ**: GeoIP データベースのダウンロードに失敗した場合、最大3回までリトライを行います。
 - **CSV 設定**: シンプルな CSV ファイルでポート番号や範囲を管理できます。
 
@@ -41,8 +41,8 @@
 ## 🚀 インストール
 
 ```bash
-git clone https://github.com/jassdack/geoipblock.git
-cd geoipblock
+git clone https://github.com/jassdack/ufw-geoipblock.git
+cd ufw-geoipblock
 
 # オプション A: ドライラン (適用せずにルールを確認)
 sudo ./install.sh --dry-run JP ports.csv
@@ -67,6 +67,7 @@ sudo ./install.sh JP,US,TW ports.csv
    sudo geoipblock-confirm
    ```
 4. 3分以内に確定コマンドが実行されなかった場合、GeoIP ルールは自動的に削除され、UFW がリロードされます。
+5. UFW が新しいルールをそもそも読み込めなかった場合（たとえば `xt_geoip` カーネルモジュールが無い場合）、インストーラーは注入したルールを `before.rules` / `before6.rules` から取り除き、それ無しで UFW を再起動してからエラー終了します。UFW は動き続け、次回の起動も通常どおり行われます。原因（後述の「トラブルシューティング」を参照）を直してから `install.sh` を再実行してください。
 
 ### 📝 CSV 設定例 (`ports.csv`)
 フォーマットは `ポート範囲,メモ,ステータス` です。
@@ -101,7 +102,13 @@ systemctl status update-geoip.timer
 
 # 更新ログの確認
 journalctl -u update-geoip.service
+
+# ダウンロード済みの新しいデータベースをすぐに反映する
+# （実行しなければ、次の reload か再起動のときに反映されます）
+sudo ufw reload
 ```
+
+更新スクリプトは `/usr/share/xt_geoip` のファイルを入れ替えるだけです。`xt_geoip` はルールの読み込み時にデータベースをカーネルへコピーするため、動作中のルールは UFW がルールを読み直すまで古いデータを使い続けます。更新スクリプトがあえて `ufw reload` を実行しないのは、reload の瞬間にすべてのファイアウォールルールが一時的に外れるためです。新しいデータベースをすぐに効かせたいときは、自分で `sudo ufw reload` を実行してください。
 
 ## 🖤 手動ブラックリスト (ipset)
 
@@ -162,8 +169,8 @@ Docker はコンテナのポートを公開する際、iptables の `PREROUTING`
 
 ## ⚠️ トラブルシューティング
 - **データベースのダウンロード失敗**: 最近の `xt_geoip_dl` は DB-IP を使用します。MaxMind からダウンロードしようとして失敗する場合は、`xtables-addons` のバージョンを更新するか、MaxMind のライセンスキーを設定してください。
-- **ルールが適用されない**: `lsmod | grep xt_geoip` を実行してカーネルモジュールがロードされているか確認してください。OpenVZ などの VPS カーネルではカスタムモジュールがサポートされていない場合があります。
-- **UFW エラー**: `/var/log/syslog` を確認して、iptables の構文エラーをチェックしてください。
+- **ルールが適用されない**: `lsmod | grep xt_geoip` を実行してカーネルモジュールがロードされているか確認してください。OpenVZ などの VPS カーネルではカスタムモジュールがサポートされていない場合があります。この理由でインストール中の `ufw reload` が失敗した場合、インストーラーは GeoIP ブロックを取り除いて UFW をそれ無しで再起動します。モジュールが使えるようになってから `install.sh` を再実行してください。
+- **UFW エラー**: `journalctl -u ufw` と `/var/log/syslog` を確認して、iptables の構文エラーをチェックしてください。
 
 ## ⚖️ 免責事項
 **自己責任で使用してください。** このツールはシステムのファイアウォールルールを変更します。

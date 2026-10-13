@@ -8,13 +8,13 @@ The script adds a multi-phase filtering block to UFW without overwriting existin
 
 1.  **Phase 1: ipset Blacklist**: Drops traffic from IPs matched in the `persistent_offenders` ipset.
 2.  **Phase 2: State Management**: Uses `conntrack` (`RELATED,ESTABLISHED`) to allow existing active sessions.
-3.  **Phase 3: Local Network**: Automatically detects and allows traffic from the host's directly attached local subnets.
+3.  **Phase 3: Local Network**: Allows traffic from the loopback interface and from the host's directly attached local subnets (auto-detected; see `TRUSTED_SUBNETS` below).
 4.  **Phase 4: GeoIP Filtering**: Uses `xt_geoip` to match countries. Non-permitted TCP/UDP traffic is logged (with rate limits) and dropped.
 
 ## ✨ Features
 
 - **Auto-Rollback (Dead Man's Switch)**: If you do not run `geoipblock-confirm` within 3 minutes of installation, the firewall changes are automatically reverted to prevent accidental SSH lockouts.
-- **Daily Updates**: GeoIP databases are updated daily via a systemd timer. Updates are built in a temporary directory and swapped atomically using `mv`.
+- **Daily Updates**: GeoIP databases are updated daily via a systemd timer. Updates are built in a temporary directory and swapped atomically using `mv`. Note that `xt_geoip` reads the database only when the rules are loaded, so a new database takes effect at the next `ufw reload` or reboot (see "Maintenance & Monitoring" below).
 - **Download Retries**: If the GeoIP database download fails, it retries 3 times before aborting safely.
 - **CSV Configuration**: Manage ports and ranges using a simple CSV file.
 
@@ -41,8 +41,8 @@ The `install.sh` script attempts to install the following dependencies via `apt-
 ## 🚀 Installation
 
 ```bash
-git clone https://github.com/jassdack/geoipblock.git
-cd geoipblock
+git clone https://github.com/jassdack/ufw-geoipblock.git
+cd ufw-geoipblock
 
 # Option A: Dry-Run (Print rules without applying)
 sudo ./install.sh --dry-run JP ports.csv
@@ -67,6 +67,7 @@ To prevent accidental lockouts, the script uses a 3-minute confirmation window:
    sudo geoipblock-confirm
    ```
 4. If you fail to run the confirm command within 3 minutes, the GeoIP rules are automatically removed and UFW is reloaded.
+5. If UFW cannot load the new rules at all (for example because the `xt_geoip` kernel module is not available), the installer removes them from `before.rules`/`before6.rules` again, restarts UFW without them and exits with an error, so UFW keeps running and starts normally at the next boot. Fix the cause (see "Troubleshooting" below) and re-run `install.sh`.
 
 ### 📝 CSV Configuration Example (`ports.csv`)
 The format is `port_range,memo,status`.
@@ -100,7 +101,13 @@ systemctl status update-geoip.timer
 
 # View update logs
 journalctl -u update-geoip.service
+
+# Apply a newly downloaded database right away
+# (without this it is picked up at the next reload or reboot)
+sudo ufw reload
 ```
+
+The updater only replaces the files in `/usr/share/xt_geoip`. `xt_geoip` copies the database into the kernel when a rule is loaded, so the running rules keep using the old data until UFW reloads them. The updater deliberately does not run `ufw reload` itself, because a reload briefly removes all firewall rules; run it yourself when you want the new database to take effect immediately.
 
 ## 🖤 Manual Blacklisting (ipset)
 
@@ -161,8 +168,8 @@ This script operates at Layer 4 (iptables). If your server is behind a CDN like 
 
 ## ⚠️ Troubleshooting
 - **Database Download Fails**: Modern `xt_geoip_dl` uses DB-IP. If your system still attempts to download from MaxMind and fails, update your `xtables-addons` version or provide a MaxMind license key.
-- **Rules Not Applying**: Run `lsmod | grep xt_geoip` to ensure the kernel module is loaded. Some VPS kernels (like OpenVZ) may not support custom kernel modules.
-- **UFW Errors**: Check `/var/log/syslog` for iptables syntax errors.
+- **Rules Not Applying**: Run `lsmod | grep xt_geoip` to ensure the kernel module is loaded. Some VPS kernels (like OpenVZ) may not support custom kernel modules. If `ufw reload` fails during installation for this reason, the installer removes the GeoIP block again and restarts UFW without it; re-run `install.sh` once the module is available.
+- **UFW Errors**: Check `journalctl -u ufw` and `/var/log/syslog` for iptables syntax errors.
 
 ## ⚖️ Disclaimer (免責事項)
 **USE AT YOUR OWN RISK.** This tool modifies your system's firewall rules. 
