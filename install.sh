@@ -257,12 +257,14 @@ inject_rules() {
 
     local detected_subnets
     detected_subnets=$(ip -o -f "$proto_flag" addr show | awk '/scope global/ {print $4}')
-    local trusted_subnets=${TRUSTED_SUBNETS:-$detected_subnets}
-    
+    # ${VAR-default} (no colon): an unset TRUSTED_SUBNETS falls back to the detected
+    # subnets, while TRUSTED_SUBNETS="" disables this phase, as documented in the README.
+    local trusted_subnets="${TRUSTED_SUBNETS-$detected_subnets}"
+
     for subnet in $trusted_subnets; do
         # Basic validation: only use subnets that match the protocol
         if [[ "$proto_flag" == "inet6" && "$subnet" == *":"* ]]; then
-            trusted_rules+="-A ufw-before-input -s $subnet -j ACCEPT"$'\n'
+            trusted_rules+="-A ufw6-before-input -s $subnet -j ACCEPT"$'\n'
         elif [[ "$proto_flag" == "inet" && "$subnet" != *":"* ]]; then
             trusted_rules+="-A ufw-before-input -s $subnet -j ACCEPT"$'\n'
         fi
@@ -310,7 +312,37 @@ cp "$SCRIPT_DIR/update-geoip.timer" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now update-geoip.timer
 
-ufw reload
+# 8. Reload UFW, rolling the injected rules back if UFW cannot load them
+# A rules file that iptables-restore rejects (e.g. because the xt_geoip kernel module is
+# missing) would keep UFW from starting at the next boot, and a failed reload leaves UFW
+# half-stopped with ENABLED=no in /etc/ufw/ufw.conf. The timed rollback below cannot help
+# here because it is only armed after this point.
+if ! ufw reload; then
+    echo "==============================================================="
+    echo " ERROR: UFW could not load the new rules (see the messages above)."
+    echo " Removing the GeoIP block from /etc/ufw/before.rules and"
+    echo " /etc/ufw/before6.rules again and restarting UFW without it..."
+    echo "==============================================================="
+    sed -i '/# === BEGIN GEOIPBLOCK ===/,/# === END GEOIPBLOCK ===/d' /etc/ufw/before.rules
+    [ -f /etc/ufw/before6.rules ] && sed -i '/# === BEGIN GEOIPBLOCK ===/,/# === END GEOIPBLOCK ===/d' /etc/ufw/before6.rules
+    # After a failed reload a plain `ufw reload` is skipped ("Firewall not enabled") and
+    # `ufw enable` alone is refused ("Firewall already started"), so stop it completely first.
+    ufw disable || true
+    if ufw --force enable; then
+        echo " UFW is running again with its previous rules (no GeoIP blocking)."
+    else
+        echo " !!! UFW could not be restarted even without the GeoIP rules. !!!"
+        echo " Check 'ufw status' and /etc/ufw/before.rules before rebooting."
+    fi
+    echo " Possible causes and how to check them:"
+    echo "   - xt_geoip kernel module not loaded/available:  lsmod | grep xt_geoip ; sudo modprobe xt_geoip"
+    echo "   - xtables-addons not built for the running kernel: dpkg -l xtables-addons-common xtables-addons-dkms ; dmesg | tail"
+    echo "   - invalid port or country in the generated rules:  ./install.sh --dry-run $SOURCE_COUNTRY $PORT_CONFIG"
+    echo "   - UFW's own log:                                   journalctl -u ufw"
+    echo " Fix the cause and run the installer again. The ipset setup in /etc/ufw/before.init"
+    echo " was left in place; it is harmless without the rules."
+    exit 1
+fi
 
 # --- DEAD MAN'S SNITCH (Auto-Rollback) ---
 # Create confirmation wrapper

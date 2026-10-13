@@ -7,6 +7,7 @@
 -A ufw-before-input -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
 # [Phase 3] Local Network Trust
+-A ufw-before-input -i lo -j ACCEPT
 {{TRUSTED_SUBNETS_RULES}}
 
 # [Phase 4] GeoIP Blocking Rules
